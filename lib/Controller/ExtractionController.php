@@ -1,255 +1,179 @@
 <?php
 namespace OCA\Extract\Controller;
 
+use ZipArchive;
+use Rar;
+
+// Only in order to access Filesystem::isFileBlacklisted().
+use OC\Files\Filesystem;
+
 use OCP\IRequest;
-use OCP\AppFramework\Http\TemplateResponse;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Controller;
 use OCP\Files\NotFoundException;
-use ZipArchive;
-use Rar;
-use PharData;
-use \OCP\IConfig;
-use OCP\L10N\IFactory;
-use OCP\IL10N;
+use OCP\Files\IRootFolder;
+use OCP\Files\File;
+use OCP\Files\Folder;
 
+use OCP\IConfig;
+use OCP\IL10N;
+use OCP\Share\IManager;
+use OCP\EventDispatcher\IEventDispatcher;
+
+//use Psr\Log\LoggerInterface;
+//use Psr\Log\LogLevel;
+//use OCP\ILogger\LoggerInterface;
+//use OCP\ILogger\LogLevel;
+
+//use OCP\App\IAppManager;
+
+use OCA\Extract\Service\ExtractionService;
 
 class ExtractionController extends Controller {
-	private $UserId;
-	private $config;
-	public function __construct(IConfig $config,$AppName, IRequest $request, string $UserId){
+
+	/** @var IL10N */
+	private $l;
+
+	/** @var LoggerInterface */
+//	private $logger;
+
+	/** @var IRootFolder */
+	private $rootFolder;
+
+	/** @var Folder */
+	private $userFolder;
+
+	/** @var string */
+	private $userId;
+
+	/**  @var ExtractionService */
+	private $extractionService;
+
+ 	public function __construct(
+		string $AppName
+		, IRequest $request
+		, ExtractionService $extractionService
+		, IRootFolder $rootFolder
+		, IL10N $l
+//		, LoggerInterface $logger
+//		, IManager $encryptionManager
+		, $UserId
+	){
 		parent::__construct($AppName, $request);
-		$this->config = $config;
-		$this->UserId = $UserId;
-		//header("Content-type: application/json");
+		$this->l = $l;
+//		$this->logger = $logger;
+		$this->userId = $UserId;
+		$this->extractionService = $extractionService;
+		$this->rootFolder = $rootFolder;
+		$this->userFolder = $this->rootFolder->getUserFolder($this->userId);
+	}
+
+	private function getFile($directory, $fileName){
+		$fileNode = $this->userFolder->get($directory . '/' . $fileName);
+		return $fileNode->getStorage()->getLocalFile($fileNode->getInternalPath());
 	}
 
 	/**
-	 * CAUTION: the @Stuff turns off security checks; for this page no admin is
-	 *          required and no CSRF check. If you don't know what CSRF is, read
-	 *          it up in the docs or you might create a security hole. This is
-	 *          basically the only required method to add this exemption, don't
-	 *          add it to any other method if you don't exactly know what it does
+	 * Register the new files to the NC filesystem.
 	 *
+	 * @param string $fileName The Nextcloud file name.
 	 *
-	 * @NoCSRFRequired
+	 * @param srting $directory The Nextcloud directory name.
+	 *
+	 * @param string $extractTo The local file-system path of the directory
+	 * with the extracted data, i.e. this is the OS path.
+	 *
+	 * @param null|string $tmpPath The Nextcloud temporary path. This is only
+	 * non-null when extracting from external storage.
 	 */
-    /**
-	* @NoAdminRequired
-	*/
+	private function postExtract(string $fileName, string $directory, string $extractTo, ?string $tmpPath){
 
-	public function extractHere($nameOfFile, $directory, $external, $shareOwner = null, IL10N $l) {
-		if (!extension_loaded ("zip")){
-			$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Zip extension is not available")));
-			return json_encode($response);
-		}
-		$zip = new ZipArchive();
-		$response = array();
-		if ($external){
-			$externalMountPoints = $this->getExternalMP();
-			foreach($externalMountPoints as $externalMP){
-				if ($zip->open($externalMP.$directory.'/'.$nameOfFile) === TRUE) {
-					$zip->extractTo($externalMP.$directory.'/');
-					$zip->close();
-					$response = array_merge($response, array("code" => 1));
-					return json_encode($response);
-				}
+		$iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($extractTo));
+		foreach ($iterator as $file) {
+			/** @var \SplFileInfo $file */
+			if (Filesystem::isFileBlacklisted($file->getBasename())) {
+//				$this->logger->warning(__METHOD__ . ': removing blacklisted file: ' . $file->getPathname());
+				// remove it
+				unlink($file->getPathname());
 			}
-			$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't find zip file")));
+		}
+
+		$NCDestination = $directory . '/' . $fileName;
+		if($tmpPath){
+			$tmpFolder = $this->rootFolder->get($tmpPath);
+			$tmpFolder->move($this->userFolder->getFullPath($NCDestination));
 		}else{
-			if ($shareOwner != null){
-				$this->UserId = $shareOwner;
-			}
-			if ($zip->open($this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.$nameOfFile) === TRUE) {
-				for($i = 0; $i < $zip->numFiles; $i++) {
-					$zip->extractTo($this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory, array($zip->getNameIndex($i)));
-					$scan = self::scanFolder('/'.$this->UserId.'/files'.$directory.'/'.$zip->getNameIndex($i));
-					if(!$scan){
-						return $scan;
-					}
-				}
-				$zip->close();
-				$response = array_merge($response, array("code" => 1));
-			}else{
-				$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't open zip file at ").$this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.$nameOfFile));
-			}
+			// This seems to be enough to trigger a files-cache refresh
+			$this->userFolder->get($NCDestination);
 		}
-		return json_encode($response);
 	}
+
 	/**
-	* @NoAdminRequired
-	*/
-	public function extractHereRar($nameOfFile, $directory, $external, $shareOwner = null) {
-		$response = array();
-		if ($external){
-			$externalMountPoints = $this->getExternalMP();
-			foreach($externalMountPoints as $externalMP){
-				if (file_exists($externalMP.$directory."/".$nameOfFile)){
-					if (extension_loaded ("rar")){
-						$rar_file = rar_open($externalMP.$directory.'/'.$nameOfFile);
-						$list = rar_list($rar_file);
-						foreach($list as $file) {
-							$entry = rar_entry_get($rar_file, $file->getName());
-							$entry->extract($externalMP.$directory.'/');
-						}
-						rar_close($rar_file);
-						$response = array_merge($response, array("code" => 1));
-						return json_encode($response);
-					}else{
-							exec('unrar x ' .escapeshellarg($externalMP.$directory. '/' .$nameOfFile). ' -R ' .escapeshellarg($externalMP.$directory). ' -o+',$output,$return);
-							if (sizeof($output) == 0){
-								$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "rar extension or unrar is not installed or available")));
-								return json_encode($response);
-							}else{
-								$response = array_merge($response, array("code" => 1));
-								return json_encode($response);
-							}
-					}
-					return;
-				}
-			}
-			$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't find rar file")));
-			return json_encode($response);
-		}else{
-			if ($shareOwner != null){
-				$this->UserId = $shareOwner;
-			}
-			$file = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.$nameOfFile;
-			$dir = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory;
-			if (extension_loaded ("rar")){
-				$rar_file = rar_open($file);
-				$list = rar_list($rar_file);
-				foreach($list as $fileOpen) {
-					$entry = rar_entry_get($rar_file, $fileOpen->getName());
-					$entry->extract($dir); // extract to the current dir
-					$scan = self::scanFolder('/'.$this->UserId.'/files'.$directory.'/'.$fileOpen->getName());
-					if(!$scan){
-						return $scan;
-					}
-				}
-				rar_close($rar_file);
-				$response = array_merge($response, array("code" => 1));
-				return json_encode($response);
-
-			}else{
-				exec('unrar x ' .escapeshellarg($file). ' -R ' .escapeshellarg($dir). ' -o+',$output,$return);
-				if(sizeof($output) <= 4){
-					if (file_exists($file)){
-						$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "rar extension or unrar is not installed or available")));
-						return json_encode($response);
-					}else{
-						$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't find rar file at ").$file));
-						return json_encode($response);
-					}
-				}else{
-					foreach ($output as $val) {
-						if(preg_split('/ /', $val, -1, PREG_SPLIT_NO_EMPTY)[0] == "Extracting" &&
-						preg_split('/ /', $val, -1, PREG_SPLIT_NO_EMPTY)[1] != "from"){
-							$fichier = substr(strrchr($PATH, "/"), 1);
-							$scan = self::scanFolder('/'.$this->UserId.'/files'.$directory.'/'.$fichier);
-							if(!$scan){
-								return $scan;
-							}
-						}
-					}
-					$response = array_merge($response, array("code" => 1));
-					return json_encode($response);
-				}
-			}
+	 * The only AJAX callback. This is a hook for ordinary cloud-users, os no admin required.
+	 *
+	 * @NoAdminRequired
+	 */
+	public function extract($nameOfFile, $directory, $external, $type){
+		if (\OC::$server->getEncryptionManager()->isEnabled()) {
+			$response = array();
+			$response = array_merge($response, array("code" => 0, "desc" => $this->l->t("Encryption is not supported yet")));
+			return new DataResponse($response);
 		}
-	}
-	/**
-	* @NoAdminRequired
-	*/
-	public function extractHereOthers($nameOfFile, $directory, $external, $shareOwner = null, IL10N $l) {
-		$response = array();
-		if ($external){
-			$externalMountPoints = $this->getExternalMP();
-			foreach($externalMountPoints as $externalMP){
-				if (file_exists($externalMP.$directory."/".$nameOfFile)){
-					if (pathinfo(pathinfo(escapeshellarg($nameOfFile))["filename"])["extension"] == "tar"){
-						exec('7za -y x ' .escapeshellarg($externalMP.$directory. '/' .$nameOfFile). ' -o' .escapeshellarg($externalMP.$directory. '/')
-					.'&& 7za -y x ' .escapeshellarg($externalMP.$directory. '/' .pathinfo($nameOfFile)["filename"]). ' -o' .escapeshellarg($externalMP.$directory. '/' .pathinfo(pathinfo($nameOfFile)["filename"])['filename']. '/')
-					, $output,$return);
-					unlink($externalMP.$directory. '/' .pathinfo($nameOfFile)["filename"]);
-					}else{
-						exec('7za -y x ' .escapeshellarg($externalMP.$directory. '/' .$nameOfFile). ' -o' .escapeshellarg($externalMP.$directory. '/' .pathinfo($nameOfFile)['filename']. '/'), $output,$return);
-					}
-					if(sizeof($output) <= 5){
-						$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "p7zip and p7zip-full are not installed or available")));
-						return json_encode($response);
-					}else{
-						$response = array_merge($response, array("code" => 1));
-						return json_encode($response);
-					}
-				}
-			}
-			$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't find archive on external local storage")));
-			return json_encode($response);
-		}else{
-			if ($shareOwner != null){
-				$this->UserId = $shareOwner;
-			}
-			$file = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.$nameOfFile;
-			$dir = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.pathinfo($nameOfFile)['filename'];
-			$scanpath = '/'.$this->UserId.'/files'.$directory.'/'.pathinfo($nameOfFile)['filename'];
-			
-			if (pathinfo(pathinfo(escapeshellarg($nameOfFile))["filename"])["extension"] == "tar"){
-				$dir = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/';
-				$filetar = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.pathinfo($nameOfFile)['filename'];
-				$dirtar = $this->config->getSystemValue('datadirectory', '').'/'.$this->UserId.'/files'.$directory.'/'.pathinfo(pathinfo($nameOfFile)['filename'])['filename'];
-				$scanpath = '/'.$this->UserId.'/files'.$directory.'/'.pathinfo(pathinfo($nameOfFile)['filename'])['filename'];
-				exec('7za -y x ' .escapeshellarg($file). ' -o' .escapeshellarg($dir).'&& 7za -y x ' .escapeshellarg($filetar). ' -o' .escapeshellarg($dirtar), $output,$return);
-				unlink($dir);
-			}else{
-				exec('7za -y x ' .escapeshellarg($file). ' -o' .escapeshellarg($dir),$output,$return);
-			}
-			if(sizeof($output) <= 5){
-				if (file_exists($file)){
-					$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "p7zip and p7zip-full are not installed or available")));
-					return json_encode($response);
-				}else{
-					$response = array_merge($response, array("code" => 0, "desc" => $l->t("extract", "Can't find archive at ").$file));
-					return json_encode($response);
-				}
-			}
-			$scan = self::scanFolder($scanpath);
-			if($scan != 1){
-				return $scan;
-			}
-			$response = array_merge($response, array("code" => 1));
-			return json_encode($response);
-		}
-	}
-	public function scanFolder($path)
-    {
-		$response = array();
-        $user = \OC::$server->getUserSession()->getUser()->getUID();
-		$scanner = new \OC\Files\Utils\Scanner($user, \OC::$server->getDatabaseConnection(), \OC::$server->getLogger());
+		$file = $this->getFile($directory, $nameOfFile);
+		$dir = dirname($file);
+		//name of the file without extension
+		$fileName = pathinfo($nameOfFile, PATHINFO_FILENAME);
+		$extractTo = $dir . '/' . $fileName;
 
+		$appPath = $this->userId . '/' . $this->appName;
 		try {
-            $scanner->scan($path, $recusive = false);
-        } catch (ForbiddenException $e) {
-			$response = array_merge($response, array("code" => 0, "desc" => $e));
-			return json_encode($response);
-        }catch (NotFoundException $e){
-			$response = array_merge($response, array("code" => 0, "desc" => 
-$l->t("extract", "Can't scan file at ").$path));
-			return json_encode($response);
-		}catch (\Exception $e){
-			$response = array_merge($response, array("code" => 0, "desc" => $e));
-			return json_encode($response);
+			$appDirectory = $this->rootFolder->get($appPath);
+		} catch (\OCP\Files\NotFoundException $e) {
+			$appDirectory = $this->rootFolder->newFolder($appPath);
 		}
-		return 1;
-	}
-	public function getExternalMP(){
-		$mounts = \OC_Mount_Config::getAbsoluteMountPoints($this->UserId);
-		$externalMountPoints = array();
-		foreach($mounts as $mount){
-			if ($mount["backend"] == "Local"){
-				$externalMountPoints[] = $mount["options"]["datadir"];
-			}
+		if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
+			$archiveDir = pathinfo($fileName, PATHINFO_FILENAME);
+		} else {
+			$archiveDir = $fileName;
 		}
-		return $externalMountPoints;
+
+		// remove temporary directory if exists from interrupted previous runs
+		try {
+			$appDirectory->get($archiveDir)->delete();
+		} catch (\OCP\Files\NotFoundException $e) {
+			// ok
+		}
+
+		$tmpPath = $appDirectory->getPath() . '/' . $archiveDir;
+		$extractTo = $appDirectory->getStorage()->getLocalFile($appDirectory->getInternalPath()) . '/' . $archiveDir;
+
+		switch ($type) {
+			case 'zip':
+				$response = $this->extractionService->extractZip($file, $fileName, $extractTo);
+				break;
+			case 'rar':
+				$response = $this->extractionService->extractRar($file, $fileName, $extractTo);
+				break;
+			default:
+				// Check if the file is .tar.gz in order to do the extraction on a single step
+				if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
+					$cleanFileName = pathinfo($fileName, PATHINFO_FILENAME);
+					$extractTo = dirname($extractTo) . '/' . $cleanFileName;
+					$response = $this->extractionService->extractOther($file, $cleanFileName, $extractTo);
+					$file = $extractTo . '/' . pathinfo($file, PATHINFO_FILENAME);
+					$fileName = $cleanFileName;
+					$response = $this->extractionService->extractOther($file, $fileName, $extractTo);
+
+					// remove .tar file
+					unlink($file);
+				}else{
+					$response = $this->extractionService->extractOther($file, $fileName, $extractTo);
+				}
+				break;
+		}
+
+		$this->postExtract($fileName, $directory, $extractTo, $tmpPath);
+
+		return new DataResponse($response);
 	}
 }

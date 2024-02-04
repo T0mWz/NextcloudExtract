@@ -1,19 +1,15 @@
 OC.L10N.register(
     "extract",
     {
-    "Extract here" : "Hier Entpacken",
-    "Error extracting " : "Fehler beim Entpacken ",
-    "Extract" : "Entpacke",
-    "Extract archive from the web interface" : "Entpacke Archiv aus dem Web Interface",
-    "Zip extension is not available" : "Zip Erweiterung ist nicht verfügbar",
-    "Can't find zip file" : "Zip-Datei kann nicht gefunden werden",
-    "Can't open zip file at %s" : "Zip-Datei kann unter %s nicht geöffnet werden",
-    "rar extension or unrar is not installed or available" : "Rar oder Unrar Erweiterung ist nicht installiert oder verfügbar",
-    "Can't find rar file" : "Rar-Datei kann nicht gefunden werden",
-    "Can't find rar file at %s" : "Rar-Datei kann unter %s nicht geöffnet werden",
-    "p7zip and p7zip-full are not installed or available" : "p7zip und p7zip-full Erweiterung ist nicht installiert oder verfügbar",
-    "Can't find archive on external local storage" : "Das Archiv kann nicht auf einem externen lokalen Speicher gefunden werden.",
-    "Can't find archive at %s" : "Archiv-Datei kann unter %s nicht gefunden werden",
-    "Can't scan file at %s" : "Die Datei kann nicht in %s gescannt werden."
+    "Extract here" : "Hier entpacken",
+    "Error extracting " : "Fehler beim Entpacken",
+    "Encryption is not supported yet" : "Verschlüsselung wird bislang nicht unterstützt",
+    "Zip extension is not available" : "Zip-Erweiterung nicht verfügbar",
+    "Cannot open Zip file" : "Zip-Datei kann nicht geöffnet werden",
+    "Oops something went wrong. Check that you have rar extension or unrar installed" : "Ups! Irgendwas lief schief. Überprüfe, ob du die Erweiterung rar oder unrar installiert hast",
+    "Oops something went wrong. Check that you have p7zip installed" : "Ups! Irgendwas lief schief. Überprüfe, ob du p7zip installiert hast",
+    "Extract" : "Entpacken",
+    "Extract archive from the web interface" : "Gepackte Datei aus dem Webinterface entpacken",
+    "Extract archives.\n\n*  **Supported :** \n\n    * Zip \n    * Rar\n    * Tar\n    * Gzip\n    * 7z\n    * Deb\n    * Bzip2\n\n*  **Requirements :** \n    * Rar PHP extension  (pecl -v install rar)\n\n    * **OR** \n    * unrar (sudo apt-get install unrar)\n\n    * **AND**\n    * p7zip (sudo apt-get install p7zip p7zip-full)\n\n*  **Note :** Encrypted files are not supported yet" : "Archive entpacken.\n\n*  **Unterstützt :** \n\n    * Zip \n    * Rar\n    * Tar\n    * Gzip\n    * 7z\n    * Deb\n    * Bzip2\n\n*  **Anforderungen:** \n    * rar PHP-Erweiterung (pecl -v install rar)\n\n    * **ODER** \n    * unrar (sudo apt-get install unrar)\n\n    * **UND**\n    * p7zip (sudo apt-get install p7zip p7zip-full)\n\n*  **ACHTUNG:** Verschlüsselte Dateien werden bislang nicht unterstützt"
 },
-"");
+"nplurals=2; plural=(n != 1);");

@@ -1,5 +1,9 @@
 # Extract
-Place this app in **nextcloud/apps/**
+
+Fork from the official Nextcloud App extract for ownCloud.
+
+
+Place this app in **owncloud/apps/** or **owncloud/apps-external/**
 
 This app does only support local external storage backend
 
