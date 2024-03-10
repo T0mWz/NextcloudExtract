@@ -1,4 +1,9 @@
 
+## 1.3.7
+
+- Improved performances
+- Add logging	
+
 ## 1.3.6
 
 - NC27 support

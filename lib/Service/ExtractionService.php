@@ -22,8 +22,7 @@
 
 namespace OCA\Extract\Service;
 
-//use Psr\Log\LoggerInterface;
-//use Psr\Log\LogLevel;
+use \OCP\ILogger;
 use OCP\IL10N;
 
 use ZipArchive;
@@ -39,10 +38,10 @@ class ExtractionService {
 
 	public function __construct(
 		IL10N $l
-//		, LoggerInterface $logger
+		, ILogger $logger
 	) {
 		$this->l = $l;
-//		$this->logger = $logger;
+		$this->logger = $logger;
 	}
 
 	public function extractZip($file, $filename, $extractTo){
@@ -96,7 +95,7 @@ class ExtractionService {
 
 		if(sizeof($output) <= 5){
 			$response = array_merge($response, array("code" => 0, "desc" => $this->l->t("Oops something went wrong. Check that you have p7zip installed")));
-//			$this->logger->log(LogLevel::ERROR, __METHOD__ . ': ' . $output);
+			$this->logger->error(__METHOD__ . ': ' . $output);
 			return $response;
 		}
 		$response = array_merge($response, array("code" => 1));
