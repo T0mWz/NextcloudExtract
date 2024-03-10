@@ -15,15 +15,11 @@ use OCP\Files\IRootFolder;
 use OCP\Files\File;
 use OCP\Files\Folder;
 
-use OCP\IConfig;
 use OCP\IL10N;
 use OCP\Share\IManager;
 use OCP\EventDispatcher\IEventDispatcher;
 
-//use Psr\Log\LoggerInterface;
-//use Psr\Log\LogLevel;
-//use OCP\ILogger\LoggerInterface;
-//use OCP\ILogger\LogLevel;
+use \OCP\ILogger;
 
 //use OCP\App\IAppManager;
 
@@ -35,7 +31,7 @@ class ExtractionController extends Controller {
 	private $l;
 
 	/** @var LoggerInterface */
-//	private $logger;
+	private $logger;
 
 	/** @var IRootFolder */
 	private $rootFolder;
@@ -55,13 +51,14 @@ class ExtractionController extends Controller {
 		, ExtractionService $extractionService
 		, IRootFolder $rootFolder
 		, IL10N $l
-//		, LoggerInterface $logger
-//		, IManager $encryptionManager
+		, ILogger $logger
+		//, IManager $encryptionManager
 		, $UserId
 	){
 		parent::__construct($AppName, $request);
 		$this->l = $l;
-//		$this->logger = $logger;
+		$this->logger = $logger;
+		//$this->encryptionManager = $encryptionManager;
 		$this->userId = $UserId;
 		$this->extractionService = $extractionService;
 		$this->rootFolder = $rootFolder;
@@ -92,19 +89,19 @@ class ExtractionController extends Controller {
 		foreach ($iterator as $file) {
 			/** @var \SplFileInfo $file */
 			if (Filesystem::isFileBlacklisted($file->getBasename())) {
-//				$this->logger->warning(__METHOD__ . ': removing blacklisted file: ' . $file->getPathname());
+				$this->logger->warning(__METHOD__ . ': removing blacklisted file: ' . $file->getPathname());
 				// remove it
 				unlink($file->getPathname());
 			}
 		}
 
 		$NCDestination = $directory . '/' . $fileName;
-		if($tmpPath){
+		if($tmpPath != ""){
 			$tmpFolder = $this->rootFolder->get($tmpPath);
 			$tmpFolder->move($this->userFolder->getFullPath($NCDestination));
 		}else{
-			// This seems to be enough to trigger a files-cache refresh
-			$this->userFolder->get($NCDestination);
+			$scanner = new \OC\Files\Utils\Scanner($this->userId, \OC::$server->getDatabaseConnection(), \OC::$server->getLogger());
+			$scanner->scan($this->userFolder->getFullPath($NCDestination));
 		}
 	}
 
@@ -114,6 +111,7 @@ class ExtractionController extends Controller {
 	 * @NoAdminRequired
 	 */
 	public function extract($nameOfFile, $directory, $external, $type){
+		$this->logger->warning(\OC::$server->getEncryptionManager()->isEnabled());
 		if (\OC::$server->getEncryptionManager()->isEnabled()) {
 			$response = array();
 			$response = array_merge($response, array("code" => 0, "desc" => $this->l->t("Encryption is not supported yet")));
@@ -125,28 +123,34 @@ class ExtractionController extends Controller {
 		$fileName = pathinfo($nameOfFile, PATHINFO_FILENAME);
 		$extractTo = $dir . '/' . $fileName;
 
-		$appPath = $this->userId . '/' . $this->appName;
-		try {
-			$appDirectory = $this->rootFolder->get($appPath);
-		} catch (\OCP\Files\NotFoundException $e) {
-			$appDirectory = $this->rootFolder->newFolder($appPath);
-		}
-		if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
-			$archiveDir = pathinfo($fileName, PATHINFO_FILENAME);
+		// if the file is un external storage
+		if($external){
+
+			$appPath = $this->userId . '/' . $this->appName;
+			try {
+				$appDirectory = $this->rootFolder->get($appPath);
+			} catch (\OCP\Files\NotFoundException $e) {
+				$appDirectory = $this->rootFolder->newFolder($appPath);
+			}
+			if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
+				$archiveDir = pathinfo($fileName, PATHINFO_FILENAME);
+			} else {
+				$archiveDir = $fileName;
+			}
+
+			// remove temporary directory if exists from interrupted previous runs
+			try {
+				$appDirectory->get($archiveDir)->delete();
+			} catch (\OCP\Files\NotFoundException $e) {
+				// ok
+			}
+
+			$tmpPath = $appDirectory->getPath() . '/' . $archiveDir;
+			$extractTo = $appDirectory->getStorage()->getLocalFile($appDirectory->getInternalPath()) . '/' . $archiveDir;
 		} else {
-			$archiveDir = $fileName;
+			$tmpPath = "";
 		}
-
-		// remove temporary directory if exists from interrupted previous runs
-		try {
-			$appDirectory->get($archiveDir)->delete();
-		} catch (\OCP\Files\NotFoundException $e) {
-			// ok
-		}
-
-		$tmpPath = $appDirectory->getPath() . '/' . $archiveDir;
-		$extractTo = $appDirectory->getStorage()->getLocalFile($appDirectory->getInternalPath()) . '/' . $archiveDir;
-
+		
 		switch ($type) {
 			case 'zip':
 				$response = $this->extractionService->extractZip($file, $fileName, $extractTo);
