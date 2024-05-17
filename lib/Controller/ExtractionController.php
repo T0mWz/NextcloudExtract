@@ -148,9 +148,15 @@ class ExtractionController extends Controller {
 			$tmpPath = $appDirectory->getPath() . '/' . $archiveDir;
 			$extractTo = $appDirectory->getStorage()->getLocalFile($appDirectory->getInternalPath()) . '/' . $archiveDir;
 		} else {
+			$extractPath = $this->userId . '/files/' . $directory . '/' . $fileName;
+			try {
+				$appDirectory = $this->rootFolder->get($extractPath);
+			} catch (\OCP\Files\NotFoundException $e) {
+				$appDirectory = $this->rootFolder->newFolder($extractPath);
+			}
 			$tmpPath = "";
 		}
-		
+
 		switch ($type) {
 			case 'zip':
 				$response = $this->extractionService->extractZip($file, $fileName, $extractTo);
