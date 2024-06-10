@@ -80,7 +80,6 @@ class ExtractionService
 				return $response;
 			}
 		} else {
-			$this->logger->debug();
 			$rar_file = rar_open($file);
 			$list = rar_list($rar_file);
 			foreach ($list as $archive_file) {
@@ -103,7 +102,7 @@ class ExtractionService
 
 		if (sizeof($output) <= 5) {
 			$response = array_merge($response, array("code" => 0, "desc" => $this->l->t("Oops something went wrong. Check that you have p7zip installed")));
-			$this->logger->error(__METHOD__ . ': ' . $output);
+			$this->logger->error(__METHOD__ . ': ' . print_r($output, true));
 			return $response;
 		}
 		$response = array_merge($response, array("code" => 1));

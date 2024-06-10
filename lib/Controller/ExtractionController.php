@@ -1,31 +1,22 @@
 <?php
+
 namespace OCA\Extract\Controller;
 
-use ZipArchive;
-use Rar;
-
-// Only in order to access Filesystem::isFileBlacklisted().
 use OC\Files\Filesystem;
-
 use OCP\IRequest;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Controller;
-use OCP\Files\NotFoundException;
 use OCP\Files\IRootFolder;
-use OCP\Files\File;
 use OCP\Files\Folder;
 
 use OCP\IL10N;
-use OCP\Share\IManager;
-use OCP\EventDispatcher\IEventDispatcher;
 
 use \OCP\ILogger;
 
-//use OCP\App\IAppManager;
-
 use OCA\Extract\Service\ExtractionService;
 
-class ExtractionController extends Controller {
+class ExtractionController extends Controller
+{
 
 	/** @var IL10N */
 	private $l;
@@ -45,27 +36,26 @@ class ExtractionController extends Controller {
 	/**  @var ExtractionService */
 	private $extractionService;
 
- 	public function __construct(
-		string $AppName
-		, IRequest $request
-		, ExtractionService $extractionService
-		, IRootFolder $rootFolder
-		, IL10N $l
-		, ILogger $logger
-		//, IManager $encryptionManager
-		, $UserId
-	){
+	public function __construct(
+		string $AppName,
+		IRequest $request,
+		ExtractionService $extractionService,
+		IRootFolder $rootFolder,
+		IL10N $l,
+		ILogger $logger,
+		$UserId
+	) {
 		parent::__construct($AppName, $request);
 		$this->l = $l;
 		$this->logger = $logger;
-		//$this->encryptionManager = $encryptionManager;
 		$this->userId = $UserId;
 		$this->extractionService = $extractionService;
 		$this->rootFolder = $rootFolder;
 		$this->userFolder = $this->rootFolder->getUserFolder($this->userId);
 	}
 
-	private function getFile($directory, $fileName){
+	private function getFile($directory, $fileName)
+	{
 		$fileNode = $this->userFolder->get($directory . '/' . $fileName);
 		return $fileNode->getStorage()->getLocalFile($fileNode->getInternalPath());
 	}
@@ -75,7 +65,7 @@ class ExtractionController extends Controller {
 	 *
 	 * @param string $fileName The Nextcloud file name.
 	 *
-	 * @param srting $directory The Nextcloud directory name.
+	 * @param string $directory The Nextcloud directory name.
 	 *
 	 * @param string $extractTo The local file-system path of the directory
 	 * with the extracted data, i.e. this is the OS path.
@@ -83,8 +73,8 @@ class ExtractionController extends Controller {
 	 * @param null|string $tmpPath The Nextcloud temporary path. This is only
 	 * non-null when extracting from external storage.
 	 */
-	private function postExtract(string $fileName, string $directory, string $extractTo, ?string $tmpPath){
-
+	private function postExtract(string $fileName, string $directory, string $extractTo, ?string $tmpPath, string $nameOfFile)
+	{
 		$iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($extractTo));
 		foreach ($iterator as $file) {
 			/** @var \SplFileInfo $file */
@@ -96,13 +86,47 @@ class ExtractionController extends Controller {
 		}
 
 		$NCDestination = $directory . '/' . $fileName;
-		if($tmpPath != ""){
+		if ($tmpPath != "") {
 			$tmpFolder = $this->rootFolder->get($tmpPath);
 			$tmpFolder->move($this->userFolder->getFullPath($NCDestination));
-		}else{
-			$scanner = new \OC\Files\Utils\Scanner($this->userId, \OC::$server->getDatabaseConnection(), \OC::$server->getLogger());
-			$scanner->scan($this->userFolder->getFullPath($NCDestination));
+		} else {
+			$filePath = "$directory/$fileName";
+			if($directory == "/") {
+				$filePath = "$nameOfFile";
+			}
+			$info = Filesystem::getView()->getFileInfo("$filePath");
+			$ownerUID = $info->getOwner()->getUID();
+			if ($ownerUID != $this->userId) {
+				$scanner = new \OC\Files\Utils\Scanner($ownerUID, \OC::$server->getDatabaseConnection(), \OC::$server->getLogger());
+				$matches = preg_split("/^.*\/$ownerUID\//U", $extractTo);
+				$scanPath = $ownerUID . "/" . $matches[1];
+				$this->logger->debug("Extracting a shared file, share owner is: $ownerUID, extracted to: $scanPath");
+				$scanner->scan($scanPath);
+			} else {
+				$scanner = new \OC\Files\Utils\Scanner($this->userId, \OC::$server->getDatabaseConnection(), \OC::$server->getLogger());
+				$scanner->scan($this->userFolder->getFullPath($NCDestination));
+			}
 		}
+	}
+
+	/**
+	 * get all storages for $dir
+	 *
+	 * @param string $dir
+	 * @return \OC\Files\Mount\MountPoint[]
+	 */
+	protected function getMounts($dir)
+	{
+		//TODO: move to the node based fileapi once that's done
+		\OC_Util::tearDownFS();
+		\OC_Util::setupFS($this->user);
+
+		$mountManager = Filesystem::getMountManager();
+		$mounts = $mountManager->findIn($dir);
+		$mounts[] = $mountManager->find($dir);
+		$mounts = \array_reverse($mounts); //start with the mount of $dir
+
+		return $mounts;
 	}
 
 	/**
@@ -110,7 +134,8 @@ class ExtractionController extends Controller {
 	 *
 	 * @NoAdminRequired
 	 */
-	public function extract($nameOfFile, $directory, $external, $type){
+	public function extract($nameOfFile, $directory, $external, $type)
+	{
 		$this->logger->warning(\OC::$server->getEncryptionManager()->isEnabled());
 		if (\OC::$server->getEncryptionManager()->isEnabled()) {
 			$response = array();
@@ -124,15 +149,14 @@ class ExtractionController extends Controller {
 		$extractTo = $dir . '/' . $fileName;
 
 		// if the file is un external storage
-		if($external){
-
+		if ($external) {
 			$appPath = $this->userId . '/' . $this->appName;
 			try {
 				$appDirectory = $this->rootFolder->get($appPath);
 			} catch (\OCP\Files\NotFoundException $e) {
 				$appDirectory = $this->rootFolder->newFolder($appPath);
 			}
-			if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
+			if (pathinfo($fileName, PATHINFO_EXTENSION) == "tar") {
 				$archiveDir = pathinfo($fileName, PATHINFO_FILENAME);
 			} else {
 				$archiveDir = $fileName;
@@ -150,33 +174,33 @@ class ExtractionController extends Controller {
 		} else {
 			$tmpPath = "";
 		}
-		
+
 		switch ($type) {
 			case 'zip':
-				$response = $this->extractionService->extractZip($file, $fileName, $extractTo);
+				$response = $this->extractionService->extractZip($file, $extractTo);
 				break;
 			case 'rar':
-				$response = $this->extractionService->extractRar($file, $fileName, $extractTo);
+				$response = $this->extractionService->extractRar($file, $extractTo);
 				break;
 			default:
 				// Check if the file is .tar.gz in order to do the extraction on a single step
-				if(pathinfo($fileName, PATHINFO_EXTENSION) == "tar"){
+				if (pathinfo($fileName, PATHINFO_EXTENSION) == "tar") {
 					$cleanFileName = pathinfo($fileName, PATHINFO_FILENAME);
 					$extractTo = dirname($extractTo) . '/' . $cleanFileName;
 					$response = $this->extractionService->extractOther($file, $cleanFileName, $extractTo);
 					$file = $extractTo . '/' . pathinfo($file, PATHINFO_FILENAME);
 					$fileName = $cleanFileName;
-					$response = $this->extractionService->extractOther($file, $fileName, $extractTo);
+					$response = $this->extractionService->extractOther($file, $extractTo);
 
 					// remove .tar file
 					unlink($file);
-				}else{
-					$response = $this->extractionService->extractOther($file, $fileName, $extractTo);
+				} else {
+					$response = $this->extractionService->extractOther($file, $extractTo);
 				}
 				break;
 		}
 
-		$this->postExtract($fileName, $directory, $extractTo, $tmpPath);
+		$this->postExtract($fileName, $directory, $extractTo, $tmpPath, $nameOfFile);
 
 		return new DataResponse($response);
 	}
